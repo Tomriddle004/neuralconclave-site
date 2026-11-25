@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""Download the public clinic preview PDFs and write them under samples/."""
+"""Unpack clinic preview PDFs from base64 jsonl shards."""
 from pathlib import Path
-import hashlib, sys, urllib.request, zipfile
+import base64, json, sys
 
-URL = "https://files.catbox.moe/sn33k9.zip"
-EXPECTED_SHA256 = "7d89acd43cd50ef7bc5de0e6c69391160581e02a488fbdf490ad831e7ccf2b3c"
 root = Path(__file__).resolve().parents[1]
+payloads = root / "samples" / "_payloads"
 dest = root / "samples"
-dest.mkdir(parents=True, exist_ok=True)
-zip_path = Path("/tmp/neuralconclave_samples.zip")
-
-print("downloading", URL)
-urllib.request.urlretrieve(URL, zip_path)
-digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
-if digest != EXPECTED_SHA256:
-    raise SystemExit(f"checksum mismatch: {digest}")
+if not payloads.is_dir():
+    print("no payloads dir; nothing to do")
+    sys.exit(0)
 
 written = 0
-with zipfile.ZipFile(zip_path) as zf:
-    for name in zf.namelist():
-        if "/" in name or "\\" in name or name.startswith(".") or not name.endswith(".pdf"):
+for part in sorted(payloads.glob("part*.jsonl")):
+    for line in part.read_text(encoding="ascii").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        name = rec["name"]
+        if "/" in name or "\\" in name or name.startswith("."):
             raise SystemExit(f"refusing unsafe name {name!r}")
-        data = zf.read(name)
-        (dest / name).write_bytes(data)
+        if not name.endswith(".pdf"):
+            raise SystemExit(f"refusing non-pdf {name!r}")
+        out = dest / name
+        out.write_bytes(base64.b64decode(rec["b64"]))
         written += 1
-        print("wrote", name, len(data))
+        print("wrote", out.name, out.stat().st_size)
 print("wrote", written, "pdfs")
+if written != 61:
+    raise SystemExit(f"expected 61 pdfs, wrote {written}")
